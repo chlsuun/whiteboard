@@ -85,6 +85,10 @@ const btnZoomIn      = document.getElementById('btnZoomIn');
 const btnZoomOut     = document.getElementById('btnZoomOut');
 const btnResetView   = document.getElementById('btnResetView');
 const zoomIndicator  = document.getElementById('zoomIndicator');
+const btnSave        = document.getElementById('btnSave');
+const saveDropdown   = document.getElementById('saveDropdown');
+const saveView       = document.getElementById('saveView');
+const saveAll        = document.getElementById('saveAll');
 // ─────────────────────────────────────────
 // 4. 캔버스 크기
 // ─────────────────────────────────────────
@@ -481,7 +485,87 @@ const throttledUpdateCursor = throttle((worldPos) => {
   });
 }, 50);
 // ─────────────────────────────────────────
-// 14. Undo & Clear
+// 14. 이미지 저장 (Export)
+// ─────────────────────────────────────────
+/** 현재 화면 그대로 PNG 저장 */
+function exportCurrentView() {
+  const offCanvas = document.createElement('canvas');
+  offCanvas.width  = canvas.width;
+  offCanvas.height = canvas.height;
+  const offCtx = offCanvas.getContext('2d');
+  // 배경색 채우기
+  offCtx.fillStyle = '#0d0d1a';
+  offCtx.fillRect(0, 0, offCanvas.width, offCanvas.height);
+  // 현재 뷰포트 그대로 렌더
+  offCtx.setTransform(viewport.scale, 0, 0, viewport.scale, viewport.x, viewport.y);
+  localStrokes.forEach(stroke => renderStrokeToCtx(offCtx, stroke));
+  downloadCanvas(offCanvas, 'liveboard-view');
+  showToast('현재 화면이 저장되었습니다', 'success');
+}
+/** 모든 획을 꽉 채워서 PNG 저장 */
+function exportAllContent() {
+  if (localStrokes.length === 0) {
+    showToast('저장할 내용이 없습니다', 'error');
+    return;
+  }
+  // 전체 획의 바운딩 박스 계산
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  localStrokes.forEach(stroke => {
+    stroke.points.forEach(p => {
+      const half = (stroke.width || 4) / 2;
+      minX = Math.min(minX, p.x - half);
+      minY = Math.min(minY, p.y - half);
+      maxX = Math.max(maxX, p.x + half);
+      maxY = Math.max(maxY, p.y + half);
+    });
+  });
+  const PADDING = 48;
+  minX -= PADDING; minY -= PADDING;
+  maxX += PADDING; maxY += PADDING;
+  const w = Math.max(1, maxX - minX);
+  const h = Math.max(1, maxY - minY);
+  const offCanvas = document.createElement('canvas');
+  offCanvas.width  = w;
+  offCanvas.height = h;
+  const offCtx = offCanvas.getContext('2d');
+  // 배경
+  offCtx.fillStyle = '#0d0d1a';
+  offCtx.fillRect(0, 0, w, h);
+  // 획을 바운딩 박스 기준으로 오프셋 적용
+  offCtx.setTransform(1, 0, 0, 1, -minX, -minY);
+  localStrokes.forEach(stroke => renderStrokeToCtx(offCtx, stroke));
+  downloadCanvas(offCanvas, 'liveboard-all');
+  showToast('전체 내용이 저장되었습니다 (' + Math.round(w) + '×' + Math.round(h) + 'px)', 'success');
+}
+/** 특정 ctx에 스트로크 렌더 (캔버스 공유 없이 독립 렌더) */
+function renderStrokeToCtx(offCtx, stroke) {
+  if (!stroke.points || stroke.points.length < 2) return;
+  offCtx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
+  offCtx.strokeStyle = stroke.color;
+  offCtx.lineWidth   = stroke.width;
+  offCtx.lineCap     = 'round';
+  offCtx.lineJoin    = 'round';
+  offCtx.beginPath();
+  offCtx.moveTo(stroke.points[0].x, stroke.points[0].y);
+  for (let i = 1; i < stroke.points.length; i++) {
+    offCtx.lineTo(stroke.points[i].x, stroke.points[i].y);
+  }
+  offCtx.stroke();
+  offCtx.globalCompositeOperation = 'source-over';
+}
+/** canvas → PNG 다운로드 */
+function downloadCanvas(cvs, filename) {
+  cvs.toBlob((blob) => {
+    const url  = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.download = filename + '-' + new Date().toISOString().slice(0,10) + '.png';
+    link.href = url;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }, 'image/png');
+}
+// ─────────────────────────────────────────
+// 15. Undo & Clear
 // ─────────────────────────────────────────
 function undo() {
   if (myStrokeIds.length === 0) return;
@@ -550,6 +634,25 @@ btnZoomOut.addEventListener('click', () => {
   applyZoom(viewport.scale * 0.8, canvas.width / 2, canvas.height / 2);
 });
 btnResetView.addEventListener('click', resetView);
+// 저장 드롭다운
+btnSave.addEventListener('click', (e) => {
+  e.stopPropagation();
+  saveDropdown.classList.toggle('visible');
+});
+saveView.addEventListener('click', () => {
+  saveDropdown.classList.remove('visible');
+  exportCurrentView();
+});
+saveAll.addEventListener('click', () => {
+  saveDropdown.classList.remove('visible');
+  exportAllContent();
+});
+// 드롭다운 외부 클릭 시 닫기
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#saveWrapper')) {
+    saveDropdown.classList.remove('visible');
+  }
+});
 btnUndo.addEventListener('click', undo);
 btnClear.addEventListener('click', () => clearModal.classList.add('visible'));
 modalCancel.addEventListener('click', () => clearModal.classList.remove('visible'));
