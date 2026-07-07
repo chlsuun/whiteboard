@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>실시간 화이트보드 | LiveBoard</title>
+  <meta name="description" content="아이패드, PC 어디서든 실시간으로 공유되는 협업 화이트보드" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- 상단 헤더 -->
+  <header class="header" id="header">
+    <div class="header-left">
+      <div class="logo">
+        <svg class="logo-icon" viewBox="0 0 28 28" fill="none">
+          <rect width="28" height="28" rx="8" fill="url(#grad)" />
+          <path d="M7 21 L13 9 L19 21" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+          <line x1="9" y1="17" x2="17" y2="17" stroke="white" stroke-width="2" stroke-linecap="round" />
+          <defs>
+            <linearGradient id="grad" x1="0" y1="0" x2="28" y2="28">
+              <stop offset="0%" stop-color="#6C63FF" />
+              <stop offset="100%" stop-color="#3ECFCF" />
+            </linearGradient>
+          </defs>
+        </svg>
+        <span class="logo-text">LiveBoard</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="status-badge" id="statusBadge">
+        <span class="status-dot" id="statusDot"></span>
+        <span class="status-text" id="statusText">연결 중...</span>
+      </div>
+      <div class="users-badge" id="usersBadge">
+        <svg viewBox="0 0 16 16" fill="none">
+          <circle cx="6" cy="6" r="3" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M1 14c0-3 2-5 5-5s5 2 5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="12" cy="5" r="2.5" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M10 14c0-2 1-3.5 2.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <span id="userCount">1</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- 메인 캔버스 -->
+  <main class="canvas-container" id="canvasContainer">
+    <canvas id="whiteboard"></canvas>
+    <!-- 다른 사용자 커서들 -->
+    <div id="cursorsLayer" class="cursors-layer"></div>
+  </main>
+
+  <!-- 툴바 -->
+  <div class="toolbar" id="toolbar">
+
+    <!-- 펜 도구 -->
+    <button class="tool-btn active" id="toolPen" title="펜">
+      <svg viewBox="0 0 24 24" fill="none">
+        <path d="M12 20h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+
+    <!-- 지우개 -->
+    <button class="tool-btn" id="toolEraser" title="지우개">
+      <svg viewBox="0 0 24 24" fill="none">
+        <path d="M20 20H7L3 16l10-10 7 7-3.5 3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M6.5 17.5l4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </button>
+
+    <div class="toolbar-divider"></div>
+
+    <!-- 색상 팔레트 -->
+    <div class="color-palette" id="colorPalette">
+      <button class="color-swatch active" data-color="#FFFFFF" style="background:#FFFFFF" title="흰색" id="color-white"></button>
+      <button class="color-swatch" data-color="#F87171" style="background:#F87171" title="빨강" id="color-red"></button>
+      <button class="color-swatch" data-color="#FBBF24" style="background:#FBBF24" title="노랑" id="color-yellow"></button>
+      <button class="color-swatch" data-color="#34D399" style="background:#34D399" title="초록" id="color-green"></button>
+      <button class="color-swatch" data-color="#60A5FA" style="background:#60A5FA" title="파랑" id="color-blue"></button>
+      <button class="color-swatch" data-color="#A78BFA" style="background:#A78BFA" title="보라" id="color-purple"></button>
+      <button class="color-swatch" data-color="#F472B6" style="background:#F472B6" title="핑크" id="color-pink"></button>
+    </div>
+
+    <!-- 커스텀 색상 -->
+    <label class="color-picker-label" title="직접 색상 선택">
+      <svg viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+        <path d="M12 2a10 10 0 010 20" fill="url(#rainbow)"/>
+        <defs>
+          <linearGradient id="rainbow" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#F87171"/>
+            <stop offset="33%" stop-color="#FBBF24"/>
+            <stop offset="66%" stop-color="#34D399"/>
+            <stop offset="100%" stop-color="#60A5FA"/>
+          </linearGradient>
+        </defs>
+      </svg>
+      <input type="color" id="customColor" value="#FFFFFF" />
+    </label>
+
+    <div class="toolbar-divider"></div>
+
+    <!-- 브러시 굵기 -->
+    <div class="brush-size-group" id="brushSizeGroup">
+      <button class="size-btn" data-size="2" id="size-thin" title="얇게">
+        <div class="size-dot" style="width:4px;height:4px"></div>
+      </button>
+      <button class="size-btn active" data-size="5" id="size-normal" title="보통">
+        <div class="size-dot" style="width:8px;height:8px"></div>
+      </button>
+      <button class="size-btn" data-size="12" id="size-thick" title="굵게">
+        <div class="size-dot" style="width:14px;height:14px"></div>
+      </button>
+      <button class="size-btn" data-size="25" id="size-xl" title="매우 굵게">
+        <div class="size-dot" style="width:20px;height:20px"></div>
+      </button>
+    </div>
+
+    <div class="toolbar-divider"></div>
+
+    <!-- 실행취소 -->
+    <button class="tool-btn" id="btnUndo" title="실행취소 (Ctrl+Z)">
+      <svg viewBox="0 0 24 24" fill="none">
+        <path d="M9 14L4 9l5-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M4 9h10.5a5.5 5.5 0 010 11H11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </button>
+
+    <!-- 전체 지우기 -->
+    <button class="tool-btn danger" id="btnClear" title="전체 지우기">
+      <svg viewBox="0 0 24 24" fill="none">
+        <polyline points="3 6 5 6 21 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M19 6l-1 14H6L5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M9 6V4h6v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+
+  </div>
+
+  <!-- 전체 지우기 확인 모달 -->
+  <div class="modal-overlay" id="clearModal">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-icon">
+        <svg viewBox="0 0 24 24" fill="none">
+          <path d="M12 9v4M12 17h.01" stroke="#F87171" stroke-width="2" stroke-linecap="round"/>
+          <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="#F87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <h2 id="modalTitle">전체 지우기</h2>
+      <p>화이트보드의 모든 내용이 삭제됩니다.<br>접속한 모든 사용자에게 적용됩니다.</p>
+      <div class="modal-actions">
+        <button class="modal-btn cancel" id="modalCancel">취소</button>
+        <button class="modal-btn confirm" id="modalConfirm">지우기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast 알림 -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+
+  <!-- Firebase 설정 -->
+  <script src="firebase-config.js"></script>
+
+  <!-- 앱 로직 -->
+  <script src="app.js"></script>
+</body>
+</html>
