@@ -42,6 +42,45 @@
         </svg>
         <span id="userCount">1</span>
       </div>
+      <!-- 저장 버튼 -->
+      <div class="save-wrapper" id="saveWrapper">
+        <button class="save-btn" id="btnSave" title="이미지로 저장">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <polyline points="7 10 12 15 17 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <line x1="12" y1="15" x2="12" y2="3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <span>저장</span>
+        </button>
+        <!-- 드롭다운 패널 -->
+        <div class="save-dropdown" id="saveDropdown">
+          <button class="save-option" id="saveView">
+            <div class="save-option-icon">
+              <svg viewBox="0 0 20 20" fill="none">
+                <rect x="2" y="2" width="16" height="16" rx="2" stroke="currentColor" stroke-width="1.5"/>
+                <path d="M2 7h16" stroke="currentColor" stroke-width="1.5"/>
+                <rect x="5" y="10" width="10" height="6" rx="1" fill="currentColor" opacity="0.3"/>
+              </svg>
+            </div>
+            <div class="save-option-text">
+              <strong>현재 화면 저장</strong>
+              <span>지금 보이는 화면 그대로</span>
+            </div>
+          </button>
+          <button class="save-option" id="saveAll">
+            <div class="save-option-icon">
+              <svg viewBox="0 0 20 20" fill="none">
+                <path d="M3 10a7 7 0 1014 0A7 7 0 003 10z" stroke="currentColor" stroke-width="1.5"/>
+                <path d="M10 6v4l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <div class="save-option-text">
+              <strong>전체 내용 저장</strong>
+              <span>모든 획을 핑치하여 저장</span>
+            </div>
+          </button>
+        </div>
+      </div>
     </div>
   </header>
   <!-- 메인 캔버스 -->
