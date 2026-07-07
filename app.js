@@ -1,28 +1,44 @@
 /* ============================================================
-   LiveBoard — app.js (v2 - 실시간 동기화 버그 수정)
+   LiveBoard — app.js (v3 - 무한 캔버스: 팬 + 줌)
    ============================================================ */
 // ─────────────────────────────────────────
 // 0. 상수 & 세션
 // ─────────────────────────────────────────
 const SESSION_ID = crypto.randomUUID();
 const CURSOR_COLORS = [
-  '#6C63FF', '#3ECFCF', '#F472B6', '#FBBF24',
-  '#34D399', '#F87171', '#60A5FA', '#A78BFA'
+  '#6C63FF','#3ECFCF','#F472B6','#FBBF24',
+  '#34D399','#F87171','#60A5FA','#A78BFA'
 ];
 const MY_CURSOR_COLOR = CURSOR_COLORS[Math.floor(Math.random() * CURSOR_COLORS.length)];
+const MIN_SCALE = 0.05;
+const MAX_SCALE = 20;
 // ─────────────────────────────────────────
 // 1. 전역 상태
 // ─────────────────────────────────────────
 let db              = null;
 let isFirebaseReady = false;
-let isDrawing       = false;
-let currentTool     = 'pen';
-let currentColor    = '#FFFFFF';
-let currentWidth    = 5;
-let currentStroke   = [];
-let localStrokes  = [];   // { id, points, color, width, tool }
-let myStrokeIds   = [];   // 내가 그린 획의 Firebase key
-let renderedKeys  = new Set(); // 이미 캔버스에 그려진 획 key (중복 방지)
+// 드로잉
+let isDrawing     = false;
+let currentTool   = 'pen';   // 'pen' | 'eraser' | 'pan'
+let currentColor  = '#FFFFFF';
+let currentWidth  = 5;
+let currentStroke = [];
+// 스트로크 관리
+let localStrokes = [];
+let myStrokeIds  = [];
+let renderedKeys = new Set();
+// ── 뷰포트 (팬 & 줌) ──
+let viewport = { x: 0, y: 0, scale: 1 };
+// 팬 드래그 상태
+let isPanning      = false;
+let panStart       = { x: 0, y: 0 };
+let panOrigin      = { x: 0, y: 0 };
+let isSpaceDown    = false;
+let prevTool       = 'pen'; // 스페이스 해제 시 복귀용
+// 터치 (핀치 줌)
+let activeTouches  = [];
+let lastPinchDist  = null;
+let lastPinchMid   = null;
 // ─────────────────────────────────────────
 // 2. Firebase 초기화
 // ─────────────────────────────────────────
@@ -47,76 +63,123 @@ function initFirebase() {
 // ─────────────────────────────────────────
 // 3. DOM 참조
 // ─────────────────────────────────────────
-const canvas        = document.getElementById('whiteboard');
-const ctx           = canvas.getContext('2d');
-const statusBadge   = document.getElementById('statusBadge');
-const statusText    = document.getElementById('statusText');
-const userCount     = document.getElementById('userCount');
-const cursorsLayer  = document.getElementById('cursorsLayer');
-const clearModal    = document.getElementById('clearModal');
-const modalCancel   = document.getElementById('modalCancel');
-const modalConfirm  = document.getElementById('modalConfirm');
+const canvas         = document.getElementById('whiteboard');
+const ctx            = canvas.getContext('2d');
+const statusBadge    = document.getElementById('statusBadge');
+const statusText     = document.getElementById('statusText');
+const userCount      = document.getElementById('userCount');
+const cursorsLayer   = document.getElementById('cursorsLayer');
+const clearModal     = document.getElementById('clearModal');
+const modalCancel    = document.getElementById('modalCancel');
+const modalConfirm   = document.getElementById('modalConfirm');
 const toastContainer = document.getElementById('toastContainer');
-const toolPen       = document.getElementById('toolPen');
-const toolEraser    = document.getElementById('toolEraser');
-const colorSwatches = document.querySelectorAll('.color-swatch');
-const customColor   = document.getElementById('customColor');
-const sizeBtns      = document.querySelectorAll('.size-btn');
-const btnUndo       = document.getElementById('btnUndo');
-const btnClear      = document.getElementById('btnClear');
+const toolPen        = document.getElementById('toolPen');
+const toolEraser     = document.getElementById('toolEraser');
+const toolPanBtn     = document.getElementById('toolPan');
+const colorSwatches  = document.querySelectorAll('.color-swatch');
+const customColor    = document.getElementById('customColor');
+const sizeBtns       = document.querySelectorAll('.size-btn');
+const btnUndo        = document.getElementById('btnUndo');
+const btnClear       = document.getElementById('btnClear');
+const btnZoomIn      = document.getElementById('btnZoomIn');
+const btnZoomOut     = document.getElementById('btnZoomOut');
+const btnResetView   = document.getElementById('btnResetView');
+const zoomIndicator  = document.getElementById('zoomIndicator');
 // ─────────────────────────────────────────
 // 4. 캔버스 크기
 // ─────────────────────────────────────────
 function resizeCanvas() {
   const container = canvas.parentElement;
-  // 기존 내용 저장
   const tempCanvas = document.createElement('canvas');
   tempCanvas.width  = canvas.width;
   tempCanvas.height = canvas.height;
   tempCanvas.getContext('2d').drawImage(canvas, 0, 0);
   canvas.width  = container.clientWidth;
   canvas.height = container.clientHeight;
-  // 내용 복원
-  ctx.drawImage(tempCanvas, 0, 0);
+  redrawAll();
 }
 window.addEventListener('resize', debounce(resizeCanvas, 200));
 // ─────────────────────────────────────────
-// 5. 드로잉 이벤트
+// 5. 좌표 변환
 // ─────────────────────────────────────────
-function getPos(e) {
+// 화면(스크린) → 월드 좌표
+function screenToWorld(sx, sy) {
+  return {
+    x: (sx - viewport.x) / viewport.scale,
+    y: (sy - viewport.y) / viewport.scale
+  };
+}
+// 이벤트에서 스크린 좌표 추출
+function getScreenPos(e, touchIndex = 0) {
   const rect = canvas.getBoundingClientRect();
-  const src  = e.touches ? e.touches[0] : e;
+  const src  = e.touches ? e.touches[touchIndex] : e;
   return {
     x: src.clientX - rect.left,
     y: src.clientY - rect.top
   };
 }
+// 이벤트에서 월드 좌표 추출
+function getWorldPos(e, touchIndex = 0) {
+  const sp = getScreenPos(e, touchIndex);
+  return screenToWorld(sp.x, sp.y);
+}
+// 두 터치 포인트 거리
+function getTouchDist(touches) {
+  const a = touches[0], b = touches[1];
+  return Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+}
+// 두 터치 포인트 중점 (스크린 좌표)
+function getTouchMidScreen(touches) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (touches[0].clientX + touches[1].clientX) / 2 - rect.left,
+    y: (touches[0].clientY + touches[1].clientY) / 2 - rect.top
+  };
+}
+// ─────────────────────────────────────────
+// 6. 줌 & 팬
+// ─────────────────────────────────────────
+function applyZoom(newScale, pivotSX, pivotSY) {
+  newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, newScale));
+  // 피벗 기준으로 줌 (피벗 스크린 좌표 불변 유지)
+  viewport.x = pivotSX - (pivotSX - viewport.x) * (newScale / viewport.scale);
+  viewport.y = pivotSY - (pivotSY - viewport.y) * (newScale / viewport.scale);
+  viewport.scale = newScale;
+  updateZoomIndicator();
+  redrawAll();
+}
+function resetView() {
+  viewport = { x: 0, y: 0, scale: 1 };
+  updateZoomIndicator();
+  redrawAll();
+}
+function updateZoomIndicator() {
+  if (zoomIndicator) zoomIndicator.textContent = Math.round(viewport.scale * 100) + '%';
+}
+// ─────────────────────────────────────────
+// 7. 드로잉
+// ─────────────────────────────────────────
 function startDraw(e) {
   isDrawing = true;
-  const pos = getPos(e);
+  const pos = getWorldPos(e);
   currentStroke = [pos];
-  ctx.beginPath();
-  ctx.moveTo(pos.x, pos.y);
 }
-function draw(e) {
+function drawContinue(e) {
   if (!isDrawing) return;
-  e.preventDefault();
-  const pos = getPos(e);
+  const pos = getWorldPos(e);
+  const prev = currentStroke[currentStroke.length - 1];
   currentStroke.push(pos);
-  // 즉각적인 로컬 렌더
-  const prev = currentStroke[currentStroke.length - 2];
-  drawSegment(prev, pos,
+  drawSegmentWorld(prev, pos,
     currentTool === 'eraser' ? '#0d0d1a' : currentColor,
     currentTool === 'eraser' ? currentWidth * 4 : currentWidth,
     currentTool
   );
-  if (isFirebaseReady) throttledUpdateCursor(pos);
 }
 function endDraw() {
   if (!isDrawing) return;
   isDrawing = false;
   if (currentStroke.length < 2) {
-    currentStroke.push({ x: currentStroke[0].x + 0.1, y: currentStroke[0].y + 0.1 });
+    currentStroke.push({ x: currentStroke[0].x + 0.5, y: currentStroke[0].y + 0.5 });
   }
   const strokeData = {
     points:    currentStroke,
@@ -127,11 +190,10 @@ function endDraw() {
     timestamp: Date.now()
   };
   if (isFirebaseReady) {
-    // Firebase에 push — key를 즉시 받아서 중복 렌더 방지
     const ref = db.ref('whiteboard/strokes').push(strokeData);
     const key = ref.key;
     myStrokeIds.push(key);
-    renderedKeys.add(key);              // ← 핵심: 내가 그린 획은 이미 렌더됐으므로 등록
+    renderedKeys.add(key);
     localStrokes.push({ id: key, ...strokeData });
   } else {
     const id = 'local_' + Date.now();
@@ -142,10 +204,12 @@ function endDraw() {
   currentStroke = [];
 }
 // ─────────────────────────────────────────
-// 6. 렌더링
+// 8. 렌더링 (뷰포트 변환 적용)
 // ─────────────────────────────────────────
-function drawSegment(from, to, color, width, tool) {
+function drawSegmentWorld(from, to, color, width, tool) {
   if (!from || !to) return;
+  ctx.save();
+  ctx.setTransform(viewport.scale, 0, 0, viewport.scale, viewport.x, viewport.y);
   ctx.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over';
   ctx.strokeStyle = color;
   ctx.lineWidth   = width;
@@ -153,12 +217,14 @@ function drawSegment(from, to, color, width, tool) {
   ctx.lineJoin    = 'round';
   ctx.beginPath();
   ctx.moveTo(from.x, from.y);
-  ctx.lineTo(to.x,   to.y);
+  ctx.lineTo(to.x, to.y);
   ctx.stroke();
-  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore();
 }
 function renderStroke(stroke) {
   if (!stroke.points || stroke.points.length < 2) return;
+  ctx.save();
+  ctx.setTransform(viewport.scale, 0, 0, viewport.scale, viewport.x, viewport.y);
   ctx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
   ctx.strokeStyle = stroke.color;
   ctx.lineWidth   = stroke.width;
@@ -170,21 +236,172 @@ function renderStroke(stroke) {
     ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
   }
   ctx.stroke();
-  ctx.globalCompositeOperation = 'source-over';
+  ctx.restore();
 }
 function redrawAll() {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
   localStrokes.forEach(s => renderStroke(s));
 }
 // ─────────────────────────────────────────
-// 7. Firebase 연동 (수정된 버전)
+// 9. 이벤트 핸들러 (마우스)
+// ─────────────────────────────────────────
+canvas.addEventListener('mousedown', (e) => {
+  // 중간 버튼 or 스페이스+좌클릭 or pan 도구
+  if (e.button === 1 || isSpaceDown || currentTool === 'pan') {
+    e.preventDefault();
+    isPanning  = true;
+    panStart   = { x: e.clientX, y: e.clientY };
+    panOrigin  = { x: viewport.x, y: viewport.y };
+    document.body.classList.add('panning');
+    return;
+  }
+  // 좌클릭 → 그리기
+  if (e.button === 0 && (currentTool === 'pen' || currentTool === 'eraser')) {
+    startDraw(e);
+  }
+});
+canvas.addEventListener('mousemove', (e) => {
+  if (isPanning) {
+    viewport.x = panOrigin.x + (e.clientX - panStart.x);
+    viewport.y = panOrigin.y + (e.clientY - panStart.y);
+    redrawAll();
+    return;
+  }
+  if (isDrawing) {
+    drawContinue(e);
+    if (isFirebaseReady) throttledUpdateCursor(getWorldPos(e));
+  }
+});
+canvas.addEventListener('mouseup', (e) => {
+  if (isPanning) {
+    isPanning = false;
+    document.body.classList.remove('panning');
+    if (isSpaceDown) document.body.classList.add('pan-ready');
+    return;
+  }
+  endDraw();
+});
+canvas.addEventListener('mouseleave', () => {
+  if (!isPanning) endDraw();
+});
+// 마우스 휠 → 줌 (피벗: 마우스 위치)
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const sp = getScreenPos(e);
+  const factor = e.deltaY < 0 ? 1.1 : 0.9;
+  applyZoom(viewport.scale * factor, sp.x, sp.y);
+}, { passive: false });
+// ─────────────────────────────────────────
+// 10. 이벤트 핸들러 (터치 — 아이패드)
+// ─────────────────────────────────────────
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  activeTouches = Array.from(e.touches);
+  if (e.touches.length === 1) {
+    if (currentTool === 'pan') {
+      // 1손가락 팬 모드
+      isPanning = true;
+      const sp  = getScreenPos(e);
+      panStart  = sp;
+      panOrigin = { x: viewport.x, y: viewport.y };
+    } else {
+      startDraw(e);
+    }
+  } else if (e.touches.length === 2) {
+    // 2손가락: 그리기 중단 후 핀치/팬
+    if (isDrawing) { isDrawing = false; currentStroke = []; redrawAll(); }
+    isPanning    = true;
+    lastPinchDist = getTouchDist(e.touches);
+    lastPinchMid  = getTouchMidScreen(e.touches);
+    panOrigin     = { x: viewport.x, y: viewport.y };
+  }
+}, { passive: false });
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  if (e.touches.length === 2) {
+    // 핀치 줌 + 팬
+    const newDist = getTouchDist(e.touches);
+    const newMid  = getTouchMidScreen(e.touches);
+    if (lastPinchDist) {
+      const scaleFactor = newDist / lastPinchDist;
+      const newScale    = Math.min(MAX_SCALE, Math.max(MIN_SCALE, viewport.scale * scaleFactor));
+      // 줌 (핀치 중점 기준)
+      viewport.x = newMid.x - (newMid.x - viewport.x) * (newScale / viewport.scale);
+      viewport.y = newMid.y - (newMid.y - viewport.y) * (newScale / viewport.scale);
+      viewport.scale = newScale;
+      // 팬 (중점 이동)
+      viewport.x += newMid.x - lastPinchMid.x;
+      viewport.y += newMid.y - lastPinchMid.y;
+      updateZoomIndicator();
+      redrawAll();
+    }
+    lastPinchDist = newDist;
+    lastPinchMid  = newMid;
+    return;
+  }
+  if (e.touches.length === 1) {
+    if (isPanning) {
+      // 1손가락 팬
+      const sp  = getScreenPos(e);
+      viewport.x = panOrigin.x + (sp.x - panStart.x);
+      viewport.y = panOrigin.y + (sp.y - panStart.y);
+      redrawAll();
+    } else {
+      drawContinue(e);
+    }
+  }
+}, { passive: false });
+canvas.addEventListener('touchend', (e) => {
+  if (e.touches.length === 0) {
+    if (isPanning) {
+      isPanning     = false;
+      lastPinchDist = null;
+      lastPinchMid  = null;
+    } else {
+      endDraw();
+    }
+  } else if (e.touches.length === 1) {
+    // 손가락 하나 뗐을 때 핀치 해제
+    lastPinchDist = null;
+    lastPinchMid  = null;
+    isPanning     = false;
+  }
+});
+canvas.addEventListener('touchcancel', () => {
+  isDrawing     = false;
+  isPanning     = false;
+  currentStroke = [];
+  lastPinchDist = null;
+  lastPinchMid  = null;
+});
+// ─────────────────────────────────────────
+// 11. 스페이스 키 → 임시 팬 모드
+// ─────────────────────────────────────────
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && !e.repeat && !isSpaceDown) {
+    isSpaceDown = true;
+    document.body.classList.add('pan-ready');
+  }
+});
+document.addEventListener('keyup', (e) => {
+  if (e.code === 'Space') {
+    isSpaceDown = false;
+    isPanning   = false;
+    document.body.classList.remove('pan-ready');
+    document.body.classList.remove('panning');
+  }
+});
+// ─────────────────────────────────────────
+// 12. Firebase 연동
 // ─────────────────────────────────────────
 function setupFirebase() {
   if (!isFirebaseReady) return;
   const strokesRef  = db.ref('whiteboard/strokes');
   const presenceRef = db.ref('whiteboard/presence/' + SESSION_ID);
   const cursorsRef  = db.ref('whiteboard/cursors');
-  // ── 연결 상태 ──
   db.ref('.info/connected').on('value', (snap) => {
     if (snap.val() === true) {
       setStatus('실시간 연결됨', 'connected');
@@ -195,25 +412,20 @@ function setupFirebase() {
       setStatus('재연결 중...', 'error');
     }
   });
-  // ── 획 수신: child_added 하나로 기존 + 신규 모두 처리 ──
-  // child_added는 기존 데이터 먼저, 이후 새로 추가된 데이터를 순서대로 받음
   strokesRef.on('child_added', (snap) => {
     const key    = snap.key;
     const stroke = snap.val();
-    // 이미 렌더된 획이면 스킵 (내가 그린 획 or 중복 이벤트)
     if (renderedKeys.has(key)) return;
     renderedKeys.add(key);
     localStrokes.push({ id: key, ...stroke });
     renderStroke(stroke);
   });
-  // ── 획 삭제 감지 (undo 또는 전체 지우기) ──
   strokesRef.on('child_removed', (snap) => {
     const key = snap.key;
     renderedKeys.delete(key);
     localStrokes = localStrokes.filter(s => s.id !== key);
     redrawAll();
   });
-  // ── 전체 지우기 감지 (다른 사람이 지운 경우) ──
   strokesRef.on('value', (snap) => {
     if (snap.val() === null) {
       renderedKeys.clear();
@@ -222,23 +434,23 @@ function setupFirebase() {
       redrawAll();
     }
   });
-  // 초기 데이터 로드 완료 후 로딩 숨기기
   strokesRef.once('value', () => hideLoading());
-  // ── 접속자 수 ──
   db.ref('whiteboard/presence').on('value', (snap) => {
     userCount.textContent = Math.max(snap.numChildren(), 1);
   });
-  // ── 원격 커서 ──
-  cursorsRef.on('child_added',   (snap) => { if (snap.key !== SESSION_ID) createOrUpdateCursor(snap.key, snap.val()); });
-  cursorsRef.on('child_changed', (snap) => { if (snap.key !== SESSION_ID) createOrUpdateCursor(snap.key, snap.val()); });
-  cursorsRef.on('child_removed', (snap) => removeCursor(snap.key));
+  cursorsRef.on('child_added',   (s) => { if (s.key !== SESSION_ID) createOrUpdateCursor(s.key, s.val()); });
+  cursorsRef.on('child_changed', (s) => { if (s.key !== SESSION_ID) createOrUpdateCursor(s.key, s.val()); });
+  cursorsRef.on('child_removed', (s) => removeCursor(s.key));
 }
 // ─────────────────────────────────────────
-// 8. 원격 커서
+// 13. 원격 커서
 // ─────────────────────────────────────────
 const remoteCursors = {};
 function createOrUpdateCursor(id, data) {
   if (!data || data.x === undefined) return;
+  // 월드 좌표 → 스크린 좌표 변환
+  const sx = data.x * viewport.scale + viewport.x;
+  const sy = data.y * viewport.scale + viewport.y;
   let el = remoteCursors[id];
   if (!el) {
     el = document.createElement('div');
@@ -254,29 +466,28 @@ function createOrUpdateCursor(id, data) {
     cursorsLayer.appendChild(el);
     remoteCursors[id] = el;
   }
-  el.style.left = data.x + 'px';
-  el.style.top  = data.y + 'px';
+  el.style.left = sx + 'px';
+  el.style.top  = sy + 'px';
 }
 function removeCursor(id) {
   if (remoteCursors[id]) { remoteCursors[id].remove(); delete remoteCursors[id]; }
 }
-const throttledUpdateCursor = throttle((pos) => {
+const throttledUpdateCursor = throttle((worldPos) => {
   if (!isFirebaseReady) return;
   db.ref('whiteboard/cursors/' + SESSION_ID).set({
-    x: pos.x, y: pos.y,
+    x: worldPos.x, y: worldPos.y,
     color: MY_CURSOR_COLOR,
     timestamp: Date.now()
   });
 }, 50);
 // ─────────────────────────────────────────
-// 9. 실행 취소 & 전체 지우기
+// 14. Undo & Clear
 // ─────────────────────────────────────────
 function undo() {
   if (myStrokeIds.length === 0) return;
   const lastId = myStrokeIds.pop();
   if (isFirebaseReady && !lastId.startsWith('local_')) {
     db.ref('whiteboard/strokes/' + lastId).remove();
-    // child_removed 이벤트가 로컬도 처리함
   } else {
     renderedKeys.delete(lastId);
     localStrokes = localStrokes.filter(s => s.id !== lastId);
@@ -286,7 +497,6 @@ function undo() {
 function clearAll() {
   if (isFirebaseReady) {
     db.ref('whiteboard/strokes').remove();
-    // value 이벤트(null)가 로컬도 처리함
   } else {
     renderedKeys.clear();
     localStrokes = [];
@@ -295,40 +505,36 @@ function clearAll() {
   }
 }
 // ─────────────────────────────────────────
-// 10. UI 이벤트
+// 15. UI 이벤트
 // ─────────────────────────────────────────
-canvas.addEventListener('mousedown',  startDraw);
-canvas.addEventListener('mousemove',  draw);
-canvas.addEventListener('mouseup',    endDraw);
-canvas.addEventListener('mouseleave', endDraw);
-canvas.addEventListener('touchstart',  startDraw, { passive: false });
-canvas.addEventListener('touchmove',   draw,      { passive: false });
-canvas.addEventListener('touchend',    endDraw);
-canvas.addEventListener('touchcancel', endDraw);
-toolPen.addEventListener('click', () => {
-  currentTool = 'pen';
-  toolPen.classList.add('active');
-  toolEraser.classList.remove('active');
-  canvas.style.cursor = 'crosshair';
-});
-toolEraser.addEventListener('click', () => {
-  currentTool = 'eraser';
-  toolEraser.classList.add('active');
-  toolPen.classList.remove('active');
-  canvas.style.cursor = 'cell';
-});
+function setActiveTool(tool) {
+  currentTool = tool;
+  toolPen.classList.toggle('active', tool === 'pen');
+  toolEraser.classList.toggle('active', tool === 'eraser');
+  toolPanBtn.classList.toggle('active', tool === 'pan');
+  if (tool === 'pan') {
+    canvas.style.cursor = 'grab';
+  } else if (tool === 'eraser') {
+    canvas.style.cursor = 'cell';
+  } else {
+    canvas.style.cursor = 'crosshair';
+  }
+}
+toolPen.addEventListener('click',    () => setActiveTool('pen'));
+toolEraser.addEventListener('click', () => setActiveTool('eraser'));
+toolPanBtn.addEventListener('click', () => setActiveTool('pan'));
 colorSwatches.forEach(sw => {
   sw.addEventListener('click', () => {
     currentColor = sw.dataset.color;
     colorSwatches.forEach(s => s.classList.remove('active'));
     sw.classList.add('active');
-    if (currentTool === 'eraser') toolPen.click();
+    if (currentTool === 'eraser' || currentTool === 'pan') setActiveTool('pen');
   });
 });
 customColor.addEventListener('input', (e) => {
   currentColor = e.target.value;
   colorSwatches.forEach(s => s.classList.remove('active'));
-  if (currentTool === 'eraser') toolPen.click();
+  if (currentTool !== 'pen') setActiveTool('pen');
 });
 sizeBtns.forEach(btn => {
   btn.addEventListener('click', () => {
@@ -337,6 +543,13 @@ sizeBtns.forEach(btn => {
     btn.classList.add('active');
   });
 });
+btnZoomIn.addEventListener('click', () => {
+  applyZoom(viewport.scale * 1.25, canvas.width / 2, canvas.height / 2);
+});
+btnZoomOut.addEventListener('click', () => {
+  applyZoom(viewport.scale * 0.8, canvas.width / 2, canvas.height / 2);
+});
+btnResetView.addEventListener('click', resetView);
 btnUndo.addEventListener('click', undo);
 btnClear.addEventListener('click', () => clearModal.classList.add('visible'));
 modalCancel.addEventListener('click', () => clearModal.classList.remove('visible'));
@@ -348,16 +561,22 @@ modalConfirm.addEventListener('click', () => {
 clearModal.addEventListener('click', (e) => {
   if (e.target === clearModal) clearModal.classList.remove('visible');
 });
+// 키보드 단축키
 document.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); }
-  if (e.key === 'Escape') clearModal.classList.remove('visible');
-  if (!e.ctrlKey && !e.metaKey) {
-    if (e.key === 'e') toolEraser.click();
-    if (e.key === 'p') toolPen.click();
+  if (e.target.tagName === 'INPUT') return;
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); return; }
+  if (e.key === 'Escape')  clearModal.classList.remove('visible');
+  if (!e.ctrlKey && !e.metaKey && !e.altKey) {
+    if (e.key === 'e') setActiveTool('eraser');
+    if (e.key === 'p') setActiveTool('pen');
+    if (e.key === 'h') setActiveTool('pan');
+    if (e.key === '0') resetView();
+    if (e.key === '+' || e.key === '=') applyZoom(viewport.scale * 1.25, canvas.width/2, canvas.height/2);
+    if (e.key === '-') applyZoom(viewport.scale * 0.8, canvas.width/2, canvas.height/2);
   }
 });
 // ─────────────────────────────────────────
-// 11. 유틸
+// 16. 유틸
 // ─────────────────────────────────────────
 function setStatus(text, type) {
   statusText.textContent = text;
@@ -375,37 +594,34 @@ function showToast(message, type = 'info') {
   }, 3000);
 }
 function hideLoading() {
-  const overlay = document.querySelector('.loading-overlay');
-  if (overlay) { overlay.classList.add('hidden'); setTimeout(() => overlay.remove(), 500); }
+  const el = document.querySelector('.loading-overlay');
+  if (el) { el.classList.add('hidden'); setTimeout(() => el.remove(), 500); }
 }
 function debounce(fn, delay) {
   let t;
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); };
 }
 function throttle(fn, limit) {
-  let inThrottle = false;
+  let busy = false;
   return (...args) => {
-    if (!inThrottle) {
-      fn(...args);
-      inThrottle = true;
-      setTimeout(() => inThrottle = false, limit);
-    }
+    if (!busy) { fn(...args); busy = true; setTimeout(() => busy = false, limit); }
   };
 }
 function createLoadingOverlay() {
-  const overlay = document.createElement('div');
-  overlay.className = 'loading-overlay';
-  overlay.innerHTML = `<div class="loading-spinner"></div><p class="loading-text">화이트보드를 불러오는 중...</p>`;
-  document.body.appendChild(overlay);
+  const el = document.createElement('div');
+  el.className = 'loading-overlay';
+  el.innerHTML = `<div class="loading-spinner"></div><p class="loading-text">화이트보드를 불러오는 중...</p>`;
+  document.body.appendChild(el);
 }
 // ─────────────────────────────────────────
-// 12. 앱 시작
+// 17. 앱 시작
 // ─────────────────────────────────────────
 function init() {
   createLoadingOverlay();
   const container = canvas.parentElement;
   canvas.width  = container.clientWidth;
   canvas.height = container.clientHeight;
+  updateZoomIndicator();
   const ready = initFirebase();
   if (ready) {
     setupFirebase();
