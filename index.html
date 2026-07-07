@@ -10,7 +10,6 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-
   <!-- 상단 헤더 -->
   <header class="header" id="header">
     <div class="header-left">
@@ -45,17 +44,14 @@
       </div>
     </div>
   </header>
-
   <!-- 메인 캔버스 -->
   <main class="canvas-container" id="canvasContainer">
     <canvas id="whiteboard"></canvas>
     <!-- 다른 사용자 커서들 -->
     <div id="cursorsLayer" class="cursors-layer"></div>
   </main>
-
   <!-- 툴바 -->
   <div class="toolbar" id="toolbar">
-
     <!-- 펜 도구 -->
     <button class="tool-btn active" id="toolPen" title="펜">
       <svg viewBox="0 0 24 24" fill="none">
@@ -63,17 +59,20 @@
         <path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </button>
-
     <!-- 지우개 -->
-    <button class="tool-btn" id="toolEraser" title="지우개">
+    <button class="tool-btn" id="toolEraser" title="지우개 (E)">
       <svg viewBox="0 0 24 24" fill="none">
         <path d="M20 20H7L3 16l10-10 7 7-3.5 3.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         <path d="M6.5 17.5l4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
       </svg>
     </button>
-
+    <!-- 손/이동 도구 -->
+    <button class="tool-btn" id="toolPan" title="이동 (H)">
+      <svg viewBox="0 0 24 24" fill="none">
+        <path d="M18 11V8a2 2 0 00-2-2v0a2 2 0 00-2 2v1M14 9V7a2 2 0 00-2-2v0a2 2 0 00-2 2v2M10 8V6a2 2 0 00-2-2v0a2 2 0 00-2 2v8l-1-1a2 2 0 00-2.83 2.83l3.5 3.5A6 6 0 0010 21h4a6 6 0 006-6v-4a2 2 0 00-2-2v0a2 2 0 00-2 2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
     <div class="toolbar-divider"></div>
-
     <!-- 색상 팔레트 -->
     <div class="color-palette" id="colorPalette">
       <button class="color-swatch active" data-color="#FFFFFF" style="background:#FFFFFF" title="흰색" id="color-white"></button>
@@ -84,7 +83,6 @@
       <button class="color-swatch" data-color="#A78BFA" style="background:#A78BFA" title="보라" id="color-purple"></button>
       <button class="color-swatch" data-color="#F472B6" style="background:#F472B6" title="핑크" id="color-pink"></button>
     </div>
-
     <!-- 커스텀 색상 -->
     <label class="color-picker-label" title="직접 색상 선택">
       <svg viewBox="0 0 24 24" fill="none">
@@ -101,9 +99,7 @@
       </svg>
       <input type="color" id="customColor" value="#FFFFFF" />
     </label>
-
     <div class="toolbar-divider"></div>
-
     <!-- 브러시 굵기 -->
     <div class="brush-size-group" id="brushSizeGroup">
       <button class="size-btn" data-size="2" id="size-thin" title="얇게">
@@ -119,9 +115,28 @@
         <div class="size-dot" style="width:20px;height:20px"></div>
       </button>
     </div>
-
     <div class="toolbar-divider"></div>
-
+    <!-- 줌 컨트롤 -->
+    <button class="tool-btn" id="btnZoomOut" title="축소 (-)">
+      <svg viewBox="0 0 24 24" fill="none">
+        <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/>
+        <path d="M8 11h6M21 21l-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <div class="zoom-indicator" id="zoomIndicator">100%</div>
+    <button class="tool-btn" id="btnZoomIn" title="확대 (+)">
+      <svg viewBox="0 0 24 24" fill="none">
+        <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/>
+        <path d="M11 8v6M8 11h6M21 21l-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </button>
+    <button class="tool-btn" id="btnResetView" title="뷰 초기화 (0)">
+      <svg viewBox="0 0 24 24" fill="none">
+        <path d="M3 12a9 9 0 1018 0 9 9 0 00-18 0" stroke="currentColor" stroke-width="2"/>
+        <path d="M9 12h6M12 9l3 3-3 3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </button>
+    <div class="toolbar-divider"></div>
     <!-- 실행취소 -->
     <button class="tool-btn" id="btnUndo" title="실행취소 (Ctrl+Z)">
       <svg viewBox="0 0 24 24" fill="none">
@@ -129,7 +144,6 @@
         <path d="M4 9h10.5a5.5 5.5 0 010 11H11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
       </svg>
     </button>
-
     <!-- 전체 지우기 -->
     <button class="tool-btn danger" id="btnClear" title="전체 지우기">
       <svg viewBox="0 0 24 24" fill="none">
@@ -139,9 +153,7 @@
         <path d="M9 6V4h6v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </button>
-
   </div>
-
   <!-- 전체 지우기 확인 모달 -->
   <div class="modal-overlay" id="clearModal">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
@@ -159,17 +171,13 @@
       </div>
     </div>
   </div>
-
   <!-- Toast 알림 -->
   <div class="toast-container" id="toastContainer"></div>
-
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
-
   <!-- Firebase 설정 -->
   <script src="firebase-config.js"></script>
-
   <!-- 앱 로직 -->
   <script src="app.js"></script>
 </body>
