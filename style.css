@@ -142,6 +142,107 @@ body::before {
   width: 14px; height: 14px;
   color: var(--accent-cyan);
 }
+/* ── 저장 버튼 ── */
+.save-wrapper {
+  position: relative;
+}
+.save-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: linear-gradient(135deg, rgba(108,99,255,0.3), rgba(62,207,207,0.2));
+  border: 1px solid rgba(108,99,255,0.5);
+  border-radius: 20px;
+  color: #C0BDFF;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+.save-btn svg {
+  width: 15px; height: 15px;
+  stroke: currentColor;
+  flex-shrink: 0;
+}
+.save-btn:hover {
+  background: linear-gradient(135deg, rgba(108,99,255,0.5), rgba(62,207,207,0.35));
+  border-color: rgba(108,99,255,0.8);
+  color: white;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(108,99,255,0.25);
+}
+/* 드롭다운 패널 */
+.save-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 240px;
+  background: #1a1a3a;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px) scale(0.97);
+  transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 200;
+}
+.save-dropdown.visible {
+  opacity: 1;
+  pointer-events: all;
+  transform: translateY(0) scale(1);
+}
+.save-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.15s ease;
+  font-family: 'Inter', sans-serif;
+  text-align: left;
+}
+.save-option:hover {
+  background: var(--glass-bg);
+}
+.save-option:not(:last-child) {
+  border-bottom: 1px solid var(--glass-border);
+}
+.save-option-icon {
+  width: 36px; height: 36px;
+  background: rgba(108,99,255,0.15);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #A5A0FF;
+}
+.save-option-icon svg {
+  width: 18px; height: 18px;
+}
+.save-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.save-option-text strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.save-option-text span {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
 /* ── 캔버스 컨테이너 ── */
 .canvas-container {
   position: fixed;
