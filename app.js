@@ -243,7 +243,58 @@ body::before {
   font-size: 11px;
   color: var(--text-secondary);
 }
-/* ── 캔버스 컨테이너 ── */
+/* 이미지 업로드 버튼 */
+.image-upload-btn {
+  cursor: pointer;
+  position: relative;
+  background: rgba(62, 207, 207, 0.1);
+  border-color: rgba(62, 207, 207, 0.4);
+  color: #3ECFCF;
+}
+.image-upload-btn:hover {
+  background: rgba(62, 207, 207, 0.2);
+  border-color: rgba(62, 207, 207, 0.7);
+  color: #7FFFFF;
+}
+/* 드래그 앤 드롭 오버레이 */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(108, 99, 255, 0.15);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 400;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.drop-overlay.active {
+  opacity: 1;
+  pointer-events: all;
+}
+.drop-overlay-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  color: #A5A0FF;
+}
+.drop-overlay-inner svg {
+  width: 80px; height: 80px;
+  animation: float 2s ease-in-out infinite;
+}
+.drop-overlay-inner p {
+  font-size: 22px;
+  font-weight: 700;
+  color: white;
+  text-shadow: 0 2px 12px rgba(108,99,255,0.5);
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-8px); }
+}
 .canvas-container {
   position: fixed;
   top: var(--header-h);
