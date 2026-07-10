@@ -1,736 +1,643 @@
 /* ============================================================
-   LiveBoard — app.js (v3 - 무한 캔버스: 팬 + 줌)
+   LiveBoard — Premium Dark Whiteboard
    ============================================================ */
-// ─────────────────────────────────────────
-// 0. 상수 & 세션
-// ─────────────────────────────────────────
-const SESSION_ID = crypto.randomUUID();
-const CURSOR_COLORS = [
-  '#6C63FF','#3ECFCF','#F472B6','#FBBF24',
-  '#34D399','#F87171','#60A5FA','#A78BFA'
-];
-const MY_CURSOR_COLOR = CURSOR_COLORS[Math.floor(Math.random() * CURSOR_COLORS.length)];
-const MIN_SCALE = 0.05;
-const MAX_SCALE = 20;
-// ─────────────────────────────────────────
-// 1. 전역 상태
-// ─────────────────────────────────────────
-let db              = null;
-let isFirebaseReady = false;
-// 드로잉
-let isDrawing     = false;
-let currentTool   = 'pen';   // 'pen' | 'eraser' | 'pan'
-let currentColor  = '#FFFFFF';
-let currentWidth  = 5;
-let currentStroke = [];
-// 스트로크 관리
-let localStrokes = [];
-let myStrokeIds  = [];
-let renderedKeys = new Set();
-// ── 뷰포트 (팬 & 줌) ──
-let viewport = { x: 0, y: 0, scale: 1 };
-// 팬 드래그 상태
-let isPanning      = false;
-let panStart       = { x: 0, y: 0 };
-let panOrigin      = { x: 0, y: 0 };
-let isSpaceDown    = false;
-let prevTool       = 'pen'; // 스페이스 해제 시 복귀용
-// 터치 (핀치 줌)
-let activeTouches  = [];
-let lastPinchDist  = null;
-let lastPinchMid   = null;
-// ─────────────────────────────────────────
-// 2. Firebase 초기화
-// ─────────────────────────────────────────
-function initFirebase() {
-  try {
-    if (typeof firebaseConfig === 'undefined') throw new Error('config 없음');
-    if (firebaseConfig.apiKey === 'YOUR_API_KEY') {
-      setStatus('오프라인 모드', 'offline');
-      showToast('Firebase 설정이 필요합니다', 'info');
-      return false;
-    }
-    firebase.initializeApp(firebaseConfig);
-    db = firebase.database();
-    isFirebaseReady = true;
-    return true;
-  } catch (e) {
-    console.error('Firebase 초기화 실패:', e);
-    setStatus('연결 실패', 'error');
-    return false;
+/* ── CSS 변수 ── */
+:root {
+  --bg-deep:       #0d0d1a;
+  --bg-surface:    #12122b;
+  --bg-card:       #1a1a3a;
+  --glass-bg:      rgba(255, 255, 255, 0.06);
+  --glass-border:  rgba(255, 255, 255, 0.12);
+  --glass-hover:   rgba(255, 255, 255, 0.10);
+  --accent-purple: #6C63FF;
+  --accent-cyan:   #3ECFCF;
+  --accent-pink:   #F472B6;
+  --accent-red:    #F87171;
+  --text-primary:  #F0F0FF;
+  --text-secondary:#9090B8;
+  --text-muted:    #505078;
+  --toolbar-h: 72px;
+  --header-h:  54px;
+  --radius-lg: 18px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+  --shadow-glow: 0 0 30px rgba(108, 99, 255, 0.15);
+  --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --transition:  all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* ── 리셋 ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+/* ── 배경 그라디언트 ── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 800px 600px at 20% 10%, rgba(108,99,255,0.12) 0%, transparent 60%),
+    radial-gradient(ellipse 600px 500px at 80% 80%, rgba(62,207,207,0.08) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+/* ── 헤더 ── */
+.header {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: var(--header-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  background: rgba(13, 13, 26, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid var(--glass-border);
+  z-index: 100;
+}
+.header-left, .header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+/* 로고 */
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+.logo-icon {
+  width: 28px; height: 28px;
+  border-radius: 8px;
+  filter: drop-shadow(0 0 8px rgba(108,99,255,0.5));
+}
+.logo-text {
+  font-size: 17px;
+  font-weight: 700;
+  background: linear-gradient(90deg, #6C63FF, #3ECFCF);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.3px;
+}
+/* 상태 배지 */
+.status-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: var(--transition);
+}
+.status-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: var(--transition);
+}
+.status-badge.connected .status-dot {
+  background: #34D399;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.6);
+  animation: pulse-dot 2s infinite;
+}
+.status-badge.connected .status-text {
+  color: #34D399;
+}
+.status-badge.error .status-dot {
+  background: var(--accent-red);
+}
+.status-badge.error .status-text {
+  color: var(--accent-red);
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+/* 유저 배지 */
+.users-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.users-badge svg {
+  width: 14px; height: 14px;
+  color: var(--accent-cyan);
+}
+/* ── 저장 버튼 ── */
+.save-wrapper {
+  position: relative;
+}
+.save-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: linear-gradient(135deg, rgba(108,99,255,0.3), rgba(62,207,207,0.2));
+  border: 1px solid rgba(108,99,255,0.5);
+  border-radius: 20px;
+  color: #C0BDFF;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+.save-btn svg {
+  width: 15px; height: 15px;
+  stroke: currentColor;
+  flex-shrink: 0;
+}
+.save-btn:hover {
+  background: linear-gradient(135deg, rgba(108,99,255,0.5), rgba(62,207,207,0.35));
+  border-color: rgba(108,99,255,0.8);
+  color: white;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(108,99,255,0.25);
+}
+/* 드롭다운 패널 */
+.save-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 240px;
+  background: #1a1a3a;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-6px) scale(0.97);
+  transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 200;
+}
+.save-dropdown.visible {
+  opacity: 1;
+  pointer-events: all;
+  transform: translateY(0) scale(1);
+}
+.save-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background 0.15s ease;
+  font-family: 'Inter', sans-serif;
+  text-align: left;
+}
+.save-option:hover {
+  background: var(--glass-bg);
+}
+.save-option:not(:last-child) {
+  border-bottom: 1px solid var(--glass-border);
+}
+.save-option-icon {
+  width: 36px; height: 36px;
+  background: rgba(108,99,255,0.15);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #A5A0FF;
+}
+.save-option-icon svg {
+  width: 18px; height: 18px;
+}
+.save-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.save-option-text strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.save-option-text span {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+/* ── 캔버스 컨테이너 ── */
+.canvas-container {
+  position: fixed;
+  top: var(--header-h);
+  left: 0; right: 0;
+  bottom: var(--toolbar-h);
+  overflow: hidden;
+  z-index: 1;
+}
+#whiteboard {
+  display: block;
+  width: 100%; height: 100%;
+  cursor: crosshair;
+  touch-action: none;
+}
+/* 커서 레이어 */
+.cursors-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+.remote-cursor {
+  position: absolute;
+  pointer-events: none;
+  transform: translate(-2px, -2px);
+  transition: left 0.05s linear, top 0.05s linear;
+}
+.remote-cursor svg {
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
+}
+.remote-cursor-label {
+  position: absolute;
+  top: 22px; left: 8px;
+  background: rgba(0,0,0,0.7);
+  color: white;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+/* ── 툴바 ── */
+.toolbar {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: var(--toolbar-h);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 16px;
+  background: rgba(13, 13, 26, 0.9);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-top: 1px solid var(--glass-border);
+  z-index: 100;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.toolbar::-webkit-scrollbar { display: none; }
+/* 구분선 */
+.toolbar-divider {
+  width: 1px;
+  height: 32px;
+  background: var(--glass-border);
+  flex-shrink: 0;
+  margin: 0 4px;
+}
+/* 도구 버튼 */
+.tool-btn {
+  width: 44px; height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: var(--transition);
+  flex-shrink: 0;
+}
+.tool-btn svg {
+  width: 18px; height: 18px;
+  stroke: currentColor;
+}
+.tool-btn:hover {
+  background: var(--glass-hover);
+  color: var(--text-primary);
+  border-color: rgba(255,255,255,0.2);
+  transform: translateY(-1px);
+}
+.tool-btn.active {
+  background: rgba(108, 99, 255, 0.2);
+  border-color: rgba(108, 99, 255, 0.6);
+  color: #A5A0FF;
+  box-shadow: 0 0 14px rgba(108, 99, 255, 0.2);
+}
+.tool-btn.danger:hover {
+  background: rgba(248, 113, 113, 0.15);
+  border-color: rgba(248, 113, 113, 0.5);
+  color: var(--accent-red);
+}
+/* 색상 팔레트 */
+.color-palette {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.color-swatch {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: var(--transition);
+  flex-shrink: 0;
+  outline: none;
+  position: relative;
+}
+.color-swatch:hover {
+  transform: scale(1.15);
+}
+.color-swatch.active {
+  border-color: rgba(255,255,255,0.9);
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.3), 0 0 12px rgba(255,255,255,0.2);
+  transform: scale(1.1);
+}
+/* 커스텀 색상 피커 */
+.color-picker-label {
+  width: 36px; height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: var(--transition);
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+}
+.color-picker-label svg {
+  width: 18px; height: 18px;
+  pointer-events: none;
+}
+.color-picker-label:hover {
+  background: var(--glass-hover);
+  transform: translateY(-1px);
+}
+.color-picker-label input[type="color"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%; height: 100%;
+}
+/* 브러시 크기 그룹 */
+.brush-size-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.size-btn {
+  width: 38px; height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: var(--transition);
+}
+.size-dot {
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: var(--transition);
+}
+.size-btn:hover {
+  background: var(--glass-bg);
+  border-color: var(--glass-border);
+}
+.size-btn:hover .size-dot {
+  background: var(--text-primary);
+}
+.size-btn.active {
+  background: rgba(108, 99, 255, 0.15);
+  border-color: rgba(108, 99, 255, 0.5);
+}
+.size-btn.active .size-dot {
+  background: #A5A0FF;
+}
+/* ── 모달 ── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+}
+.modal-overlay.visible {
+  opacity: 1;
+  pointer-events: all;
+}
+.modal {
+  background: #1a1a3a;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  padding: 36px 32px;
+  max-width: 360px;
+  width: calc(100% - 32px);
+  text-align: center;
+  box-shadow: var(--shadow-card), 0 0 60px rgba(248,113,113,0.1);
+  transform: scale(0.92) translateY(10px);
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.modal-overlay.visible .modal {
+  transform: scale(1) translateY(0);
+}
+.modal-icon {
+  width: 56px; height: 56px;
+  background: rgba(248, 113, 113, 0.12);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 20px;
+}
+.modal-icon svg {
+  width: 28px; height: 28px;
+}
+.modal h2 {
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 10px;
+  color: var(--text-primary);
+}
+.modal p {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: 28px;
+}
+.modal-actions {
+  display: flex;
+  gap: 10px;
+}
+.modal-btn {
+  flex: 1;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition);
+  border: none;
+  font-family: 'Inter', sans-serif;
+}
+.modal-btn.cancel {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  color: var(--text-secondary);
+}
+.modal-btn.cancel:hover {
+  background: var(--glass-hover);
+  color: var(--text-primary);
+}
+.modal-btn.confirm {
+  background: linear-gradient(135deg, #F87171, #EF4444);
+  color: white;
+  box-shadow: 0 4px 16px rgba(248,113,113,0.3);
+}
+.modal-btn.confirm:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 24px rgba(248,113,113,0.4);
+}
+/* ── Toast ── */
+.toast-container {
+  position: fixed;
+  top: calc(var(--header-h) + 12px);
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 300;
+}
+.toast {
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: white;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: var(--shadow-card);
+  animation: slideIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  max-width: 260px;
+}
+.toast.success { background: linear-gradient(135deg, #059669, #34D399); }
+.toast.error   { background: linear-gradient(135deg, #DC2626, #F87171); }
+.toast.info    { background: linear-gradient(135deg, #4F46E5, #6C63FF); }
+.toast.fade-out {
+  animation: slideOut 0.3s ease forwards;
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(100%); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes slideOut {
+  from { opacity: 1; transform: translateX(0); }
+  to   { opacity: 0; transform: translateX(100%); }
+}
+/* ── 로딩 오버레이 ── */
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-deep);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  z-index: 500;
+  transition: opacity 0.5s ease;
+}
+.loading-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.loading-spinner {
+  width: 48px; height: 48px;
+  border: 3px solid var(--glass-border);
+  border-top-color: var(--accent-purple);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.loading-text {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+/* ── 줌 인디케이터 ── */
+.zoom-indicator {
+  padding: 4px 10px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 50px;
+  text-align: center;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.3px;
+}
+/* 팬 모드 커서 */
+body.panning        { cursor: grabbing !important; }
+body.panning canvas { cursor: grabbing !important; }
+body.pan-ready        { cursor: grab !important; }
+body.pan-ready canvas { cursor: grab !important; }
+/* ── 반응형 (모바일 / 아이패드) ── */
+@media (max-width: 768px) {
+  .toolbar {
+    gap: 4px;
+    padding: 0 8px;
+  }
+  .tool-btn {
+    width: 40px; height: 40px;
+  }
+  .color-swatch {
+    width: 22px; height: 22px;
+  }
+  .color-picker-label {
+    width: 32px; height: 32px;
+  }
+  .size-btn {
+    width: 32px; height: 32px;
   }
 }
-// ─────────────────────────────────────────
-// 3. DOM 참조
-// ─────────────────────────────────────────
-const canvas         = document.getElementById('whiteboard');
-const ctx            = canvas.getContext('2d');
-const statusBadge    = document.getElementById('statusBadge');
-const statusText     = document.getElementById('statusText');
-const userCount      = document.getElementById('userCount');
-const cursorsLayer   = document.getElementById('cursorsLayer');
-const clearModal     = document.getElementById('clearModal');
-const modalCancel    = document.getElementById('modalCancel');
-const modalConfirm   = document.getElementById('modalConfirm');
-const toastContainer = document.getElementById('toastContainer');
-const toolPen        = document.getElementById('toolPen');
-const toolEraser     = document.getElementById('toolEraser');
-const toolPanBtn     = document.getElementById('toolPan');
-const colorSwatches  = document.querySelectorAll('.color-swatch');
-const customColor    = document.getElementById('customColor');
-const sizeBtns       = document.querySelectorAll('.size-btn');
-const btnUndo        = document.getElementById('btnUndo');
-const btnClear       = document.getElementById('btnClear');
-const btnZoomIn      = document.getElementById('btnZoomIn');
-const btnZoomOut     = document.getElementById('btnZoomOut');
-const btnResetView   = document.getElementById('btnResetView');
-const zoomIndicator  = document.getElementById('zoomIndicator');
-const btnSave        = document.getElementById('btnSave');
-const saveDropdown   = document.getElementById('saveDropdown');
-const saveView       = document.getElementById('saveView');
-const saveAll        = document.getElementById('saveAll');
-// ─────────────────────────────────────────
-// 4. 캔버스 크기
-// ─────────────────────────────────────────
-function resizeCanvas() {
-  const container = canvas.parentElement;
-  const tempCanvas = document.createElement('canvas');
-  tempCanvas.width  = canvas.width;
-  tempCanvas.height = canvas.height;
-  tempCanvas.getContext('2d').drawImage(canvas, 0, 0);
-  canvas.width  = container.clientWidth;
-  canvas.height = container.clientHeight;
-  redrawAll();
-}
-window.addEventListener('resize', debounce(resizeCanvas, 200));
-// ─────────────────────────────────────────
-// 5. 좌표 변환
-// ─────────────────────────────────────────
-// 화면(스크린) → 월드 좌표
-function screenToWorld(sx, sy) {
-  return {
-    x: (sx - viewport.x) / viewport.scale,
-    y: (sy - viewport.y) / viewport.scale
-  };
-}
-// 이벤트에서 스크린 좌표 추출
-function getScreenPos(e, touchIndex = 0) {
-  const rect = canvas.getBoundingClientRect();
-  const src  = e.touches ? e.touches[touchIndex] : e;
-  return {
-    x: src.clientX - rect.left,
-    y: src.clientY - rect.top
-  };
-}
-// 이벤트에서 월드 좌표 추출
-function getWorldPos(e, touchIndex = 0) {
-  const sp = getScreenPos(e, touchIndex);
-  return screenToWorld(sp.x, sp.y);
-}
-// 두 터치 포인트 거리
-function getTouchDist(touches) {
-  const a = touches[0], b = touches[1];
-  return Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
-}
-// 두 터치 포인트 중점 (스크린 좌표)
-function getTouchMidScreen(touches) {
-  const rect = canvas.getBoundingClientRect();
-  return {
-    x: (touches[0].clientX + touches[1].clientX) / 2 - rect.left,
-    y: (touches[0].clientY + touches[1].clientY) / 2 - rect.top
-  };
-}
-// ─────────────────────────────────────────
-// 6. 줌 & 팬
-// ─────────────────────────────────────────
-function applyZoom(newScale, pivotSX, pivotSY) {
-  newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, newScale));
-  // 피벗 기준으로 줌 (피벗 스크린 좌표 불변 유지)
-  viewport.x = pivotSX - (pivotSX - viewport.x) * (newScale / viewport.scale);
-  viewport.y = pivotSY - (pivotSY - viewport.y) * (newScale / viewport.scale);
-  viewport.scale = newScale;
-  updateZoomIndicator();
-  redrawAll();
-}
-function resetView() {
-  viewport = { x: 0, y: 0, scale: 1 };
-  updateZoomIndicator();
-  redrawAll();
-}
-function updateZoomIndicator() {
-  if (zoomIndicator) zoomIndicator.textContent = Math.round(viewport.scale * 100) + '%';
-}
-// ─────────────────────────────────────────
-// 7. 드로잉
-// ─────────────────────────────────────────
-function startDraw(e) {
-  isDrawing = true;
-  const pos = getWorldPos(e);
-  currentStroke = [pos];
-}
-function drawContinue(e) {
-  if (!isDrawing) return;
-  const pos = getWorldPos(e);
-  const prev = currentStroke[currentStroke.length - 1];
-  currentStroke.push(pos);
-  drawSegmentWorld(prev, pos,
-    currentTool === 'eraser' ? '#0d0d1a' : currentColor,
-    currentTool === 'eraser' ? currentWidth * 4 : currentWidth,
-    currentTool
-  );
-}
-function endDraw() {
-  if (!isDrawing) return;
-  isDrawing = false;
-  if (currentStroke.length < 2) {
-    currentStroke.push({ x: currentStroke[0].x + 0.5, y: currentStroke[0].y + 0.5 });
-  }
-  const strokeData = {
-    points:    currentStroke,
-    color:     currentTool === 'eraser' ? '#0d0d1a' : currentColor,
-    width:     currentTool === 'eraser' ? currentWidth * 4 : currentWidth,
-    tool:      currentTool,
-    sessionId: SESSION_ID,
-    timestamp: Date.now()
-  };
-  if (isFirebaseReady) {
-    const ref = db.ref('whiteboard/strokes').push(strokeData);
-    const key = ref.key;
-    myStrokeIds.push(key);
-    renderedKeys.add(key);
-    localStrokes.push({ id: key, ...strokeData });
-  } else {
-    const id = 'local_' + Date.now();
-    myStrokeIds.push(id);
-    renderedKeys.add(id);
-    localStrokes.push({ id, ...strokeData });
-  }
-  currentStroke = [];
-}
-// ─────────────────────────────────────────
-// 8. 렌더링 (뷰포트 변환 적용)
-// ─────────────────────────────────────────
-function drawSegmentWorld(from, to, color, width, tool) {
-  if (!from || !to) return;
-  ctx.save();
-  ctx.setTransform(viewport.scale, 0, 0, viewport.scale, viewport.x, viewport.y);
-  ctx.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over';
-  ctx.strokeStyle = color;
-  ctx.lineWidth   = width;
-  ctx.lineCap     = 'round';
-  ctx.lineJoin    = 'round';
-  ctx.beginPath();
-  ctx.moveTo(from.x, from.y);
-  ctx.lineTo(to.x, to.y);
-  ctx.stroke();
-  ctx.restore();
-}
-function renderStroke(stroke) {
-  if (!stroke.points || stroke.points.length < 2) return;
-  ctx.save();
-  ctx.setTransform(viewport.scale, 0, 0, viewport.scale, viewport.x, viewport.y);
-  ctx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
-  ctx.strokeStyle = stroke.color;
-  ctx.lineWidth   = stroke.width;
-  ctx.lineCap     = 'round';
-  ctx.lineJoin    = 'round';
-  ctx.beginPath();
-  ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
-  for (let i = 1; i < stroke.points.length; i++) {
-    ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
-  }
-  ctx.stroke();
-  ctx.restore();
-}
-function redrawAll() {
-  ctx.save();
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.restore();
-  localStrokes.forEach(s => renderStroke(s));
-}
-// ─────────────────────────────────────────
-// 9. 이벤트 핸들러 (마우스)
-// ─────────────────────────────────────────
-canvas.addEventListener('mousedown', (e) => {
-  // 중간 버튼 or 스페이스+좌클릭 or pan 도구
-  if (e.button === 1 || isSpaceDown || currentTool === 'pan') {
-    e.preventDefault();
-    isPanning  = true;
-    panStart   = { x: e.clientX, y: e.clientY };
-    panOrigin  = { x: viewport.x, y: viewport.y };
-    document.body.classList.add('panning');
-    return;
-  }
-  // 좌클릭 → 그리기
-  if (e.button === 0 && (currentTool === 'pen' || currentTool === 'eraser')) {
-    startDraw(e);
-  }
-});
-canvas.addEventListener('mousemove', (e) => {
-  if (isPanning) {
-    viewport.x = panOrigin.x + (e.clientX - panStart.x);
-    viewport.y = panOrigin.y + (e.clientY - panStart.y);
-    redrawAll();
-    return;
-  }
-  if (isDrawing) {
-    drawContinue(e);
-    if (isFirebaseReady) throttledUpdateCursor(getWorldPos(e));
-  }
-});
-canvas.addEventListener('mouseup', (e) => {
-  if (isPanning) {
-    isPanning = false;
-    document.body.classList.remove('panning');
-    if (isSpaceDown) document.body.classList.add('pan-ready');
-    return;
-  }
-  endDraw();
-});
-canvas.addEventListener('mouseleave', () => {
-  if (!isPanning) endDraw();
-});
-// 마우스 휠 → 줌 (피벗: 마우스 위치)
-canvas.addEventListener('wheel', (e) => {
-  e.preventDefault();
-  const sp = getScreenPos(e);
-  const factor = e.deltaY < 0 ? 1.1 : 0.9;
-  applyZoom(viewport.scale * factor, sp.x, sp.y);
-}, { passive: false });
-// ─────────────────────────────────────────
-// 10. 이벤트 핸들러 (터치 — 아이패드)
-// ─────────────────────────────────────────
-canvas.addEventListener('touchstart', (e) => {
-  e.preventDefault();
-  activeTouches = Array.from(e.touches);
-  if (e.touches.length === 1) {
-    if (currentTool === 'pan') {
-      // 1손가락 팬 모드
-      isPanning = true;
-      const sp  = getScreenPos(e);
-      panStart  = sp;
-      panOrigin = { x: viewport.x, y: viewport.y };
-    } else {
-      startDraw(e);
-    }
-  } else if (e.touches.length === 2) {
-    // 2손가락: 그리기 중단 후 핀치/팬
-    if (isDrawing) { isDrawing = false; currentStroke = []; redrawAll(); }
-    isPanning    = true;
-    lastPinchDist = getTouchDist(e.touches);
-    lastPinchMid  = getTouchMidScreen(e.touches);
-    panOrigin     = { x: viewport.x, y: viewport.y };
-  }
-}, { passive: false });
-canvas.addEventListener('touchmove', (e) => {
-  e.preventDefault();
-  if (e.touches.length === 2) {
-    // 핀치 줌 + 팬
-    const newDist = getTouchDist(e.touches);
-    const newMid  = getTouchMidScreen(e.touches);
-    if (lastPinchDist) {
-      const scaleFactor = newDist / lastPinchDist;
-      const newScale    = Math.min(MAX_SCALE, Math.max(MIN_SCALE, viewport.scale * scaleFactor));
-      // 줌 (핀치 중점 기준)
-      viewport.x = newMid.x - (newMid.x - viewport.x) * (newScale / viewport.scale);
-      viewport.y = newMid.y - (newMid.y - viewport.y) * (newScale / viewport.scale);
-      viewport.scale = newScale;
-      // 팬 (중점 이동)
-      viewport.x += newMid.x - lastPinchMid.x;
-      viewport.y += newMid.y - lastPinchMid.y;
-      updateZoomIndicator();
-      redrawAll();
-    }
-    lastPinchDist = newDist;
-    lastPinchMid  = newMid;
-    return;
-  }
-  if (e.touches.length === 1) {
-    if (isPanning) {
-      // 1손가락 팬
-      const sp  = getScreenPos(e);
-      viewport.x = panOrigin.x + (sp.x - panStart.x);
-      viewport.y = panOrigin.y + (sp.y - panStart.y);
-      redrawAll();
-    } else {
-      drawContinue(e);
-    }
-  }
-}, { passive: false });
-canvas.addEventListener('touchend', (e) => {
-  if (e.touches.length === 0) {
-    if (isPanning) {
-      isPanning     = false;
-      lastPinchDist = null;
-      lastPinchMid  = null;
-    } else {
-      endDraw();
-    }
-  } else if (e.touches.length === 1) {
-    // 손가락 하나 뗐을 때 핀치 해제
-    lastPinchDist = null;
-    lastPinchMid  = null;
-    isPanning     = false;
-  }
-});
-canvas.addEventListener('touchcancel', () => {
-  isDrawing     = false;
-  isPanning     = false;
-  currentStroke = [];
-  lastPinchDist = null;
-  lastPinchMid  = null;
-});
-// ─────────────────────────────────────────
-// 11. 스페이스 키 → 임시 팬 모드
-// ─────────────────────────────────────────
-document.addEventListener('keydown', (e) => {
-  if (e.code === 'Space' && !e.repeat && !isSpaceDown) {
-    isSpaceDown = true;
-    document.body.classList.add('pan-ready');
-  }
-});
-document.addEventListener('keyup', (e) => {
-  if (e.code === 'Space') {
-    isSpaceDown = false;
-    isPanning   = false;
-    document.body.classList.remove('pan-ready');
-    document.body.classList.remove('panning');
-  }
-});
-// ─────────────────────────────────────────
-// 12. Firebase 연동
-// ─────────────────────────────────────────
-function setupFirebase() {
-  if (!isFirebaseReady) return;
-  const strokesRef  = db.ref('whiteboard/strokes');
-  const presenceRef = db.ref('whiteboard/presence/' + SESSION_ID);
-  const cursorsRef  = db.ref('whiteboard/cursors');
-  db.ref('.info/connected').on('value', (snap) => {
-    if (snap.val() === true) {
-      setStatus('실시간 연결됨', 'connected');
-      presenceRef.set({ color: MY_CURSOR_COLOR, joinedAt: Date.now() });
-      presenceRef.onDisconnect().remove();
-      db.ref('whiteboard/cursors/' + SESSION_ID).onDisconnect().remove();
-    } else {
-      setStatus('재연결 중...', 'error');
-    }
-  });
-  strokesRef.on('child_added', (snap) => {
-    const key    = snap.key;
-    const stroke = snap.val();
-    if (renderedKeys.has(key)) return;
-    renderedKeys.add(key);
-    localStrokes.push({ id: key, ...stroke });
-    renderStroke(stroke);
-  });
-  strokesRef.on('child_removed', (snap) => {
-    const key = snap.key;
-    renderedKeys.delete(key);
-    localStrokes = localStrokes.filter(s => s.id !== key);
-    redrawAll();
-  });
-  strokesRef.on('value', (snap) => {
-    if (snap.val() === null) {
-      renderedKeys.clear();
-      localStrokes = [];
-      myStrokeIds  = [];
-      redrawAll();
-    }
-  });
-  strokesRef.once('value', () => hideLoading());
-  db.ref('whiteboard/presence').on('value', (snap) => {
-    userCount.textContent = Math.max(snap.numChildren(), 1);
-  });
-  cursorsRef.on('child_added',   (s) => { if (s.key !== SESSION_ID) createOrUpdateCursor(s.key, s.val()); });
-  cursorsRef.on('child_changed', (s) => { if (s.key !== SESSION_ID) createOrUpdateCursor(s.key, s.val()); });
-  cursorsRef.on('child_removed', (s) => removeCursor(s.key));
-}
-// ─────────────────────────────────────────
-// 13. 원격 커서
-// ─────────────────────────────────────────
-const remoteCursors = {};
-function createOrUpdateCursor(id, data) {
-  if (!data || data.x === undefined) return;
-  // 월드 좌표 → 스크린 좌표 변환
-  const sx = data.x * viewport.scale + viewport.x;
-  const sy = data.y * viewport.scale + viewport.y;
-  let el = remoteCursors[id];
-  if (!el) {
-    el = document.createElement('div');
-    el.className = 'remote-cursor';
-    el.innerHTML = `
-      <svg width="20" height="20" viewBox="0 0 20 20">
-        <path d="M4 2L16 10L9 11.5L6.5 18L4 2Z"
-          fill="${data.color || '#6C63FF'}" stroke="white"
-          stroke-width="1.5" stroke-linejoin="round"/>
-      </svg>
-      <div class="remote-cursor-label" style="background:${data.color || '#6C63FF'}">참가자</div>
-    `;
-    cursorsLayer.appendChild(el);
-    remoteCursors[id] = el;
-  }
-  el.style.left = sx + 'px';
-  el.style.top  = sy + 'px';
-}
-function removeCursor(id) {
-  if (remoteCursors[id]) { remoteCursors[id].remove(); delete remoteCursors[id]; }
-}
-const throttledUpdateCursor = throttle((worldPos) => {
-  if (!isFirebaseReady) return;
-  db.ref('whiteboard/cursors/' + SESSION_ID).set({
-    x: worldPos.x, y: worldPos.y,
-    color: MY_CURSOR_COLOR,
-    timestamp: Date.now()
-  });
-}, 50);
-// ─────────────────────────────────────────
-// 14. 이미지 저장 (Export)
-// ─────────────────────────────────────────
-/** 현재 화면 그대로 PNG 저장 */
-function exportCurrentView() {
-  const offCanvas = document.createElement('canvas');
-  offCanvas.width  = canvas.width;
-  offCanvas.height = canvas.height;
-  const offCtx = offCanvas.getContext('2d');
-  // 배경색 채우기
-  offCtx.fillStyle = '#0d0d1a';
-  offCtx.fillRect(0, 0, offCanvas.width, offCanvas.height);
-  // 현재 뷰포트 그대로 렌더
-  offCtx.setTransform(viewport.scale, 0, 0, viewport.scale, viewport.x, viewport.y);
-  localStrokes.forEach(stroke => renderStrokeToCtx(offCtx, stroke));
-  downloadCanvas(offCanvas, 'liveboard-view');
-  showToast('현재 화면이 저장되었습니다', 'success');
-}
-/** 모든 획을 꽉 채워서 PNG 저장 */
-function exportAllContent() {
-  if (localStrokes.length === 0) {
-    showToast('저장할 내용이 없습니다', 'error');
-    return;
-  }
-  // 전체 획의 바운딩 박스 계산
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  localStrokes.forEach(stroke => {
-    stroke.points.forEach(p => {
-      const half = (stroke.width || 4) / 2;
-      minX = Math.min(minX, p.x - half);
-      minY = Math.min(minY, p.y - half);
-      maxX = Math.max(maxX, p.x + half);
-      maxY = Math.max(maxY, p.y + half);
-    });
-  });
-  const PADDING = 48;
-  minX -= PADDING; minY -= PADDING;
-  maxX += PADDING; maxY += PADDING;
-  const w = Math.max(1, maxX - minX);
-  const h = Math.max(1, maxY - minY);
-  const offCanvas = document.createElement('canvas');
-  offCanvas.width  = w;
-  offCanvas.height = h;
-  const offCtx = offCanvas.getContext('2d');
-  // 배경
-  offCtx.fillStyle = '#0d0d1a';
-  offCtx.fillRect(0, 0, w, h);
-  // 획을 바운딩 박스 기준으로 오프셋 적용
-  offCtx.setTransform(1, 0, 0, 1, -minX, -minY);
-  localStrokes.forEach(stroke => renderStrokeToCtx(offCtx, stroke));
-  downloadCanvas(offCanvas, 'liveboard-all');
-  showToast('전체 내용이 저장되었습니다 (' + Math.round(w) + '×' + Math.round(h) + 'px)', 'success');
-}
-/** 특정 ctx에 스트로크 렌더 (캔버스 공유 없이 독립 렌더) */
-function renderStrokeToCtx(offCtx, stroke) {
-  if (!stroke.points || stroke.points.length < 2) return;
-  offCtx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
-  offCtx.strokeStyle = stroke.color;
-  offCtx.lineWidth   = stroke.width;
-  offCtx.lineCap     = 'round';
-  offCtx.lineJoin    = 'round';
-  offCtx.beginPath();
-  offCtx.moveTo(stroke.points[0].x, stroke.points[0].y);
-  for (let i = 1; i < stroke.points.length; i++) {
-    offCtx.lineTo(stroke.points[i].x, stroke.points[i].y);
-  }
-  offCtx.stroke();
-  offCtx.globalCompositeOperation = 'source-over';
-}
-/** canvas → PNG 다운로드 */
-function downloadCanvas(cvs, filename) {
-  cvs.toBlob((blob) => {
-    const url  = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.download = filename + '-' + new Date().toISOString().slice(0,10) + '.png';
-    link.href = url;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }, 'image/png');
-}
-// ─────────────────────────────────────────
-// 15. Undo & Clear
-// ─────────────────────────────────────────
-function undo() {
-  if (myStrokeIds.length === 0) return;
-  const lastId = myStrokeIds.pop();
-  if (isFirebaseReady && !lastId.startsWith('local_')) {
-    db.ref('whiteboard/strokes/' + lastId).remove();
-  } else {
-    renderedKeys.delete(lastId);
-    localStrokes = localStrokes.filter(s => s.id !== lastId);
-    redrawAll();
+@media (max-width: 480px) {
+  .users-badge {
+    display: none;
   }
 }
-function clearAll() {
-  if (isFirebaseReady) {
-    db.ref('whiteboard/strokes').remove();
-  } else {
-    renderedKeys.clear();
-    localStrokes = [];
-    myStrokeIds  = [];
-    redrawAll();
-  }
-}
-// ─────────────────────────────────────────
-// 15. UI 이벤트
-// ─────────────────────────────────────────
-function setActiveTool(tool) {
-  currentTool = tool;
-  toolPen.classList.toggle('active', tool === 'pen');
-  toolEraser.classList.toggle('active', tool === 'eraser');
-  toolPanBtn.classList.toggle('active', tool === 'pan');
-  if (tool === 'pan') {
-    canvas.style.cursor = 'grab';
-  } else if (tool === 'eraser') {
-    canvas.style.cursor = 'cell';
-  } else {
-    canvas.style.cursor = 'crosshair';
-  }
-}
-toolPen.addEventListener('click',    () => setActiveTool('pen'));
-toolEraser.addEventListener('click', () => setActiveTool('eraser'));
-toolPanBtn.addEventListener('click', () => setActiveTool('pan'));
-colorSwatches.forEach(sw => {
-  sw.addEventListener('click', () => {
-    currentColor = sw.dataset.color;
-    colorSwatches.forEach(s => s.classList.remove('active'));
-    sw.classList.add('active');
-    if (currentTool === 'eraser' || currentTool === 'pan') setActiveTool('pen');
-  });
-});
-customColor.addEventListener('input', (e) => {
-  currentColor = e.target.value;
-  colorSwatches.forEach(s => s.classList.remove('active'));
-  if (currentTool !== 'pen') setActiveTool('pen');
-});
-sizeBtns.forEach(btn => {
-  btn.addEventListener('click', () => {
-    currentWidth = parseInt(btn.dataset.size);
-    sizeBtns.forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-  });
-});
-btnZoomIn.addEventListener('click', () => {
-  applyZoom(viewport.scale * 1.25, canvas.width / 2, canvas.height / 2);
-});
-btnZoomOut.addEventListener('click', () => {
-  applyZoom(viewport.scale * 0.8, canvas.width / 2, canvas.height / 2);
-});
-btnResetView.addEventListener('click', resetView);
-// 저장 드롭다운
-btnSave.addEventListener('click', (e) => {
-  e.stopPropagation();
-  saveDropdown.classList.toggle('visible');
-});
-saveView.addEventListener('click', () => {
-  saveDropdown.classList.remove('visible');
-  exportCurrentView();
-});
-saveAll.addEventListener('click', () => {
-  saveDropdown.classList.remove('visible');
-  exportAllContent();
-});
-// 드롭다운 외부 클릭 시 닫기
-document.addEventListener('click', (e) => {
-  if (!e.target.closest('#saveWrapper')) {
-    saveDropdown.classList.remove('visible');
-  }
-});
-btnUndo.addEventListener('click', undo);
-btnClear.addEventListener('click', () => clearModal.classList.add('visible'));
-modalCancel.addEventListener('click', () => clearModal.classList.remove('visible'));
-modalConfirm.addEventListener('click', () => {
-  clearModal.classList.remove('visible');
-  clearAll();
-  showToast('화이트보드가 초기화되었습니다', 'success');
-});
-clearModal.addEventListener('click', (e) => {
-  if (e.target === clearModal) clearModal.classList.remove('visible');
-});
-// 키보드 단축키
-document.addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'INPUT') return;
-  if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); return; }
-  if (e.key === 'Escape')  clearModal.classList.remove('visible');
-  if (!e.ctrlKey && !e.metaKey && !e.altKey) {
-    if (e.key === 'e') setActiveTool('eraser');
-    if (e.key === 'p') setActiveTool('pen');
-    if (e.key === 'h') setActiveTool('pan');
-    if (e.key === '0') resetView();
-    if (e.key === '+' || e.key === '=') applyZoom(viewport.scale * 1.25, canvas.width/2, canvas.height/2);
-    if (e.key === '-') applyZoom(viewport.scale * 0.8, canvas.width/2, canvas.height/2);
-  }
-});
-// ─────────────────────────────────────────
-// 16. 유틸
-// ─────────────────────────────────────────
-function setStatus(text, type) {
-  statusText.textContent = text;
-  statusBadge.className  = 'status-badge ' + type;
-}
-function showToast(message, type = 'info') {
-  const toast = document.createElement('div');
-  toast.className = `toast ${type}`;
-  const icons = { success: '✓', error: '✕', info: 'ℹ' };
-  toast.innerHTML = `<span>${icons[type] || 'ℹ'}</span> ${message}`;
-  toastContainer.appendChild(toast);
-  setTimeout(() => {
-    toast.classList.add('fade-out');
-    setTimeout(() => toast.remove(), 300);
-  }, 3000);
-}
-function hideLoading() {
-  const el = document.querySelector('.loading-overlay');
-  if (el) { el.classList.add('hidden'); setTimeout(() => el.remove(), 500); }
-}
-function debounce(fn, delay) {
-  let t;
-  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); };
-}
-function throttle(fn, limit) {
-  let busy = false;
-  return (...args) => {
-    if (!busy) { fn(...args); busy = true; setTimeout(() => busy = false, limit); }
-  };
-}
-function createLoadingOverlay() {
-  const el = document.createElement('div');
-  el.className = 'loading-overlay';
-  el.innerHTML = `<div class="loading-spinner"></div><p class="loading-text">화이트보드를 불러오는 중...</p>`;
-  document.body.appendChild(el);
-}
-// ─────────────────────────────────────────
-// 17. 앱 시작
-// ─────────────────────────────────────────
-function init() {
-  createLoadingOverlay();
-  const container = canvas.parentElement;
-  canvas.width  = container.clientWidth;
-  canvas.height = container.clientHeight;
-  updateZoomIndicator();
-  const ready = initFirebase();
-  if (ready) {
-    setupFirebase();
-  } else {
-    hideLoading();
-    showToast('오프라인 모드로 실행 중', 'info');
-  }
-}
-document.addEventListener('DOMContentLoaded', init);
